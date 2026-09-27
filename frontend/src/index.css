@@ -1,0 +1,57 @@
+.customer-account {
+  margin-bottom: 32px;
+}
+
+.account-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.account-card,
+.history-card {
+  padding: 16px;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.account-card h3 {
+  margin-top: 0;
+}
+
+.account-card p {
+  margin-bottom: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.history-list {
+  display: grid;
+  gap: 12px;
+}
+
+.history-card p {
+  margin: 8px 0;
+}
+
+.payment-status {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  text-transform: capitalize;
+  background: #eee;
+}
+
+.payment-status.paid {
+  background: #d8f3dc;
+}
+
+.payment-status.partial {
+  background: #fff0c2;
+}
+
+.payment-status.unpaid {
+  background: #ffe0e0;
+}

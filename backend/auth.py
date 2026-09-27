@@ -1,16 +1,23 @@
 import os
-import secrets
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
+from pwdlib import PasswordHash
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import User
-from schemas import OTPRequest, OTPVerify, TokenResponse
+from schemas import (
+    ChangePasswordRequest,
+    LoginRequest,
+    PasswordResetRequest,
+    TokenResponse,
+    UserCreate,
+    UserResponse,
+)
 
 load_dotenv()
 
@@ -23,9 +30,15 @@ if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET is missing")
 
 security = HTTPBearer()
+password_hash = PasswordHash.recommended()
 
-# Development only: temporary OTP storage
-otp_store = {}
+
+def hash_password(password: str) -> str:
+    return password_hash.hash(password)
+
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    return password_hash.verify(password, hashed_password)
 
 
 def create_access_token(user_id: int):
@@ -43,87 +56,73 @@ def create_access_token(user_id: int):
     )
 
 
-@router.post("/request-otp")
-def request_otp(
-    data: OTPRequest,
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ):
-    mobile = data.mobile_number.strip()
+    try:
+        payload = jwt.decode(
+            credentials.credentials,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+        )
 
-    # Generate a six-digit OTP
-    otp = f"{secrets.randbelow(1000000):06d}"
+        user_id = int(payload["sub"])
 
-    otp_store[mobile] = {
-        "otp": otp,
-        "expires": datetime.now(timezone.utc)
-        + timedelta(minutes=5),
-        "name": data.name,
-    }
+    except (JWTError, ValueError, KeyError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
 
-    # Development only. Never log OTPs in production.
-    print(f"Development OTP for {mobile}: {otp}")
+    user = db.query(User).filter(User.id == user_id).first()
 
-    return {
-        "message": "OTP generated. Check backend terminal."
-    }
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account not found or disabled",
+        )
+
+    return user
 
 
-@router.post("/verify-otp", response_model=TokenResponse)
-def verify_otp(
-    data: OTPVerify,
+def require_admin(
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+
+    return current_user
+
+
+@router.post("/login", response_model=TokenResponse)
+def login(
+    data: LoginRequest,
     db: Session = Depends(get_db),
 ):
+    name = data.name.strip()
     mobile = data.mobile_number.strip()
-
-    challenge = otp_store.get(mobile)
-
-    if not challenge:
-        raise HTTPException(
-            status_code=400,
-            detail="Request an OTP first",
-        )
-
-    if datetime.now(timezone.utc) > challenge["expires"]:
-        otp_store.pop(mobile, None)
-
-        raise HTTPException(
-            status_code=400,
-            detail="OTP expired",
-        )
-
-    if not secrets.compare_digest(
-        data.otp,
-        challenge["otp"],
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid OTP",
-        )
 
     user = db.query(User).filter(
         User.mobile_number == mobile
     ).first()
 
-    if user is None:
-        name = (data.name or challenge["name"] or "").strip()
-
-        if not name:
-            raise HTTPException(
-                status_code=400,
-                detail="Name is required for new users",
-            )
-
-        user = User(
-            name=name,
-            mobile_number=mobile,
-            role="customer",
+    # Use a general message so the response doesn't reveal
+    # whether a particular name or mobile number exists.
+    if (
+        user is None
+        or not user.is_active
+        or user.name.casefold() != name.casefold()
+        or not user.password_hash
+        or not verify_password(data.password, user.password_hash)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid name, mobile number, or password",
         )
-
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-
-    otp_store.pop(mobile, None)
 
     token = create_access_token(user.id)
 
@@ -134,36 +133,138 @@ def verify_otp(
     }
 
 
-@router.get("/me")
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+@router.get("/me", response_model=UserResponse)
+def get_me(
+    current_user: User = Depends(get_current_user),
+):
+    return current_user
+
+
+@router.post("/change-password")
+def change_password(
+    data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    token = credentials.credentials
-
-    try:
-        payload = jwt.decode(
-            token,
-            JWT_SECRET,
-            algorithms=[JWT_ALGORITHM],
-        )
-
-        user_id = int(payload["sub"])
-
-    except (JWTError, ValueError, KeyError):
+    if not current_user.password_hash:
         raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired token",
+            status_code=400,
+            detail="No password is set for this account",
         )
 
+    if not verify_password(
+        data.current_password,
+        current_user.password_hash,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Current password is incorrect",
+        )
+
+    current_user.password_hash = hash_password(data.new_password)
+    current_user.must_change_password = False
+
+    db.commit()
+
+    return {"message": "Password changed successfully"}
+
+
+@router.post(
+    "/users",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_customer(
+    data: UserCreate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    mobile = data.mobile_number.strip()
+
+    existing_user = db.query(User).filter(
+        User.mobile_number == mobile
+    ).first()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=409,
+            detail="A user with this mobile number already exists",
+        )
+
+    user = User(
+        name=data.name.strip(),
+        mobile_number=mobile,
+        password_hash=hash_password(data.temporary_password),
+        role="customer",
+        must_change_password=True,
+        is_active=True,
+    )
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return user
+
+
+@router.get("/users", response_model=list[UserResponse])
+def list_customers(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    return (
+        db.query(User)
+        .filter(User.role == "customer")
+        .order_by(User.name)
+        .all()
+    )
+
+
+@router.post("/users/{user_id}/reset-password")
+def reset_customer_password(
+    user_id: int,
+    data: PasswordResetRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
     user = db.query(User).filter(
-        User.id == user_id
+        User.id == user_id,
+        User.role == "customer",
     ).first()
 
     if user is None:
         raise HTTPException(
-            status_code=401,
-            detail="User not found",
+            status_code=404,
+            detail="Customer not found",
         )
+
+    user.password_hash = hash_password(data.temporary_password)
+    user.must_change_password = True
+
+    db.commit()
+
+    return {"message": "Temporary password set successfully"}
+
+
+@router.delete("/users/{user_id}", response_model=UserResponse)
+def deactivate_customer(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    user = db.query(User).filter(
+        User.id == user_id,
+        User.role == "customer",
+    ).first()
+
+    if user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found",
+        )
+
+    user.is_active = False
+    db.commit()
+    db.refresh(user)
 
     return user

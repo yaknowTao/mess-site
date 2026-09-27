@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+} from "react-router-dom";
 
-import MenuList from "./components/MenuList";
-import Header from "./components/Header";
 import LoginPage from "./pages/LoginPage";
+import ChangePasswordPage from "./pages/ChangePasswordPage";
+import AdminDashboard from "./pages/AdminDashboard";
+import CustomerDashboard from "./pages/CustomerDashboard";
 import { getMe } from "./services/api";
+import Header from "./components/Header";
 
-function App() {
+function AppContent() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(() =>
     localStorage.getItem("access_token")
@@ -23,14 +31,11 @@ function App() {
 
       try {
         const currentUser = await getMe(savedToken);
-
         setUser(currentUser);
         setToken(savedToken);
-      } catch (error) {
-        // Token is invalid or expired.
+      } catch {
         localStorage.removeItem("access_token");
         localStorage.removeItem("user");
-
         setUser(null);
         setToken(null);
       } finally {
@@ -42,6 +47,9 @@ function App() {
   }, []);
 
   function handleLogin(userData, accessToken) {
+    localStorage.setItem("access_token", accessToken);
+    localStorage.setItem("user", JSON.stringify(userData));
+
     setUser(userData);
     setToken(accessToken);
   }
@@ -54,6 +62,13 @@ function App() {
     setToken(null);
   }
 
+  async function handlePasswordChanged() {
+    const updatedUser = await getMe(token);
+
+    localStorage.setItem("user", JSON.stringify(updatedUser));
+    setUser(updatedUser);
+  }
+
   if (checkingLogin) {
     return <p>Checking your login...</p>;
   }
@@ -62,15 +77,61 @@ function App() {
     return <LoginPage onLogin={handleLogin} />;
   }
 
+  if (user.must_change_password) {
+    return (
+      <ChangePasswordPage
+        token={token}
+        onPasswordChanged={handlePasswordChanged}
+      />
+    );
+  }
+
+  if (user.role === "admin") {
+    return (
+      <Routes>
+        <Route
+          path="/admin/*"
+          element={
+            <main>
+              <Header name={user.name} />
+              <button onClick={handleLogout}>Logout</button>
+              <AdminDashboard token={token} />
+            </main>
+          }
+        />
+
+        <Route
+          path="*"
+          element={<Navigate to="/admin" replace />}
+        />
+      </Routes>
+    );
+  }
+
   return (
-    <main>
-      <Header name={user.name} />
-
-      <button onClick={handleLogout}>Logout</button>
-
-      <MenuList />
-    </main>
+    <Routes>
+      <Route
+        path="/customer/*"
+        element={
+          <CustomerDashboard
+            token={token}
+            user={user}
+            onLogout={handleLogout}
+          />
+        }
+      />
+      <Route
+        path="*"
+        element={<Navigate to="/customer/home" replace />}
+      />
+    </Routes>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
+  );
+}

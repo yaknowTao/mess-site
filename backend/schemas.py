@@ -1,7 +1,7 @@
-
+from datetime import date,datetime
 from decimal import Decimal
-
 from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 
 
 # -------------------------
@@ -23,19 +23,26 @@ class MenuItemResponse(BaseModel):
 # AUTHENTICATION
 # -------------------------
 
-class OTPRequest(BaseModel):
-    mobile_number: str = Field(
-        min_length=10,
-        max_length=15,
-    )
 
-    name: str | None = None
+class LoginRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    mobile_number: str = Field(min_length=10, max_length=15)
+    password: str = Field(min_length=1, max_length=128)
 
 
-class OTPVerify(BaseModel):
-    mobile_number: str
-    otp: str
-    name: str | None = None
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class UserCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    mobile_number: str = Field(min_length=10, max_length=15)
+    temporary_password: str = Field(min_length=8, max_length=128)
+
+
+class PasswordResetRequest(BaseModel):
+    temporary_password: str = Field(min_length=8, max_length=128)
 
 
 class UserResponse(BaseModel):
@@ -43,6 +50,8 @@ class UserResponse(BaseModel):
     name: str
     mobile_number: str
     role: str
+    must_change_password: bool
+    is_active: bool
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -51,3 +60,120 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
+
+
+# -------------------------
+# ORDERS
+# -------------------------
+
+class OrderItemCreate(BaseModel):
+    menu_item_id: int
+    quantity: int = Field(ge=1)
+
+
+class OrderCreate(BaseModel):
+    meal_type: str = "lunch"
+    items: list[OrderItemCreate] = Field(min_length=1)
+
+
+class OrderResponse(BaseModel):
+    id: int
+    date: date
+    meal_type: str
+    total_amount: Decimal
+    payment_status: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+class OrderItemResponse(BaseModel):
+    id:int
+    menu_item_id:int
+    quantity:int
+    unit_price:Decimal
+
+    model_config=ConfigDict(from_attributes=True)
+
+class MyOrderResponse(BaseModel):
+    id:int
+    date:date
+    meal_type:str
+    eating:bool
+    total_amount:Decimal
+    amount_paid:Decimal
+    payment_status:str
+    created_at:datetime
+    items:list[OrderItemResponse]
+
+    model_config=ConfigDict(from_attributes=True)
+
+class OrderUpsert(BaseModel):
+    eating:bool=True
+    items:list[OrderItemCreate]=Field(default_factory=list)
+
+class AdminOrderItemResponse(BaseModel):
+    menu_item_id: int
+    menu_item_name: str
+    quantity: int
+    unit_price: Decimal
+
+class AdminOrderResponse(BaseModel):
+    id: int
+    user_id: int
+    customer_name: str
+    customer_mobile: str
+    date: date
+    meal_type: str
+    eating: bool
+    total_amount: Decimal
+    amount_paid:Decimal
+    payment_status: str
+    items: list[AdminOrderItemResponse]
+
+# -------------------------
+# CUSTOMER PAYMENTS
+# -------------------------
+
+class MoneyTransactionCreate(BaseModel):
+    user_id: int
+    amount: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class CustomerTransactionResponse(BaseModel):
+    id: int
+    user_id: int
+    transaction_type: str
+    amount: Decimal
+    note: str | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerAccountOrderResponse(BaseModel):
+    id: int
+    date: date
+    meal_type: str
+    eating: bool
+    total_amount: Decimal
+    amount_paid: Decimal
+    payment_status: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerAccountResponse(BaseModel):
+    user_id: int
+    customer_name: str
+    total_due: Decimal
+    available_credit: Decimal
+    orders: list[CustomerAccountOrderResponse]
+    transactions: list[CustomerTransactionResponse]
+
+
+class ApplyCreditResponse(BaseModel):
+    message: str
+    user_id: int
+    amount_applied: Decimal
+    remaining_credit: Decimal

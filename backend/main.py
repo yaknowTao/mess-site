@@ -12,6 +12,7 @@ from database import Base, engine, get_db
 from models import MenuItem
 from schemas import MenuItemResponse
 from auth import router as auth_router
+from orders import router as orders_router
 
 
 @asynccontextmanager
@@ -22,6 +23,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(orders_router)
 
 
 app.add_middleware(

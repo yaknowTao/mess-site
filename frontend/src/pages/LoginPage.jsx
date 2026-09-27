@@ -1,20 +1,17 @@
 import { useState } from "react";
-import { requestOtp, verifyOtp } from "../services/api";
+import { getMe, login } from "../services/api";
 
 export default function LoginPage({ onLogin }) {
   const [name, setName] = useState("");
   const [mobileNumber, setMobileNumber] = useState("");
-  const [otp, setOtp] = useState("");
+  const [password, setPassword] = useState("");
 
-  const [otpRequested, setOtpRequested] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
 
-  async function handleRequestOtp(event) {
+  async function handleLogin(event) {
     event.preventDefault();
     setError("");
-    setMessage("");
 
     if (!/^\d{10}$/.test(mobileNumber)) {
       setError("Enter a valid 10-digit mobile number.");
@@ -24,32 +21,15 @@ export default function LoginPage({ onLogin }) {
     try {
       setLoading(true);
 
-      const result = await requestOtp(name, mobileNumber);
+      const result = await login(name.trim(), mobileNumber, password);
+      const accessToken = result.access_token;
 
-      setOtpRequested(true);
-      setMessage(result.message || "OTP requested. Check the backend terminal.");
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
+      const user = await getMe(accessToken);
 
-  async function handleVerifyOtp(event) {
-    event.preventDefault();
-    setError("");
-    setMessage("");
+      localStorage.setItem("access_token", accessToken);
+      localStorage.setItem("user", JSON.stringify(user));
 
-    try {
-      setLoading(true);
-
-      const result = await verifyOtp(name, mobileNumber, otp);
-
-      // Store the token and user for this development version.
-      localStorage.setItem("access_token", result.access_token);
-      localStorage.setItem("user", JSON.stringify(result.user));
-
-      onLogin(result.user, result.access_token);
+      onLogin(user, accessToken);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -60,74 +40,52 @@ export default function LoginPage({ onLogin }) {
   return (
     <div className="login-page">
       <h1>Welcome to MessMate</h1>
-      <p>Log in with your mobile number to continue.</p>
+      <p>Log in with your account details.</p>
 
-      {!otpRequested ? (
-        <form onSubmit={handleRequestOtp}>
-          <label>
-            Your name
-            <input
-              type="text"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Enter your name"
-              required
-            />
-          </label>
+      <form onSubmit={handleLogin}>
+        <label>
+          Your name
+          <input
+            type="text"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Enter your name"
+            autoComplete="name"
+            required
+          />
+        </label>
 
-          <label>
-            Mobile number
-            <input
-              type="tel"
-              value={mobileNumber}
-              onChange={(event) => setMobileNumber(event.target.value)}
-              placeholder="10-digit mobile number"
-              inputMode="numeric"
-              maxLength={10}
-              required
-            />
-          </label>
+        <label>
+          Mobile number
+          <input
+            type="tel"
+            value={mobileNumber}
+            onChange={(event) => setMobileNumber(event.target.value)}
+            placeholder="10-digit mobile number"
+            inputMode="numeric"
+            maxLength={10}
+            autoComplete="tel"
+            required
+          />
+        </label>
 
-          <button type="submit" disabled={loading}>
-            {loading ? "Requesting..." : "Get OTP"}
-          </button>
-        </form>
-      ) : (
-        <form onSubmit={handleVerifyOtp}>
-          <p>Enter the OTP for {mobileNumber}.</p>
+        <label>
+          Password
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="Enter your password"
+            autoComplete="current-password"
+            required
+          />
+        </label>
 
-          <label>
-            OTP
-            <input
-              type="text"
-              value={otp}
-              onChange={(event) => setOtp(event.target.value)}
-              placeholder="Enter OTP"
-              inputMode="numeric"
-              maxLength={6}
-              required
-            />
-          </label>
+        <button type="submit" disabled={loading}>
+          {loading ? "Logging in..." : "Login"}
+        </button>
+      </form>
 
-          <button type="submit" disabled={loading}>
-            {loading ? "Verifying..." : "Verify and Login"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setOtpRequested(false);
-              setOtp("");
-              setError("");
-              setMessage("");
-            }}
-          >
-            Change mobile number
-          </button>
-        </form>
-      )}
-
-      {message && <p>{message}</p>}
       {error && <p style={{ color: "red" }}>{error}</p>}
     </div>
   );
