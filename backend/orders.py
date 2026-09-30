@@ -1,5 +1,6 @@
-from datetime import date
+from datetime import date,datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -8,14 +9,55 @@ from sqlalchemy import func
 
 from auth import get_current_user, require_admin
 from database import get_db
-from models import (MenuItem, Order, OrderItem, User, CustomerTransaction,OrderPaymentAllocation)
+from models import (MenuItem, Order, OrderItem, User, CustomerTransaction, OrderPaymentAllocation, CustomerPaymentRequest, MessDayOff)
 from schemas import (
     OrderCreate, OrderResponse, MyOrderResponse,
-    OrderUpsert, AdminOrderResponse, MoneyTransactionCreate,)
+    OrderUpsert, AdminOrderResponse, MoneyTransactionCreate, MessDayOffResponse,)
+
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
 CENT = Decimal("0.01")
+
+INDIA_TZ=ZoneInfo('Asia/Kolkata')
+
+def validate_order_date_and_cutoff(order_date: date, meal_type: str):
+    now = datetime.now(INDIA_TZ)
+    today = now.date()
+
+    if order_date < today:
+        raise HTTPException(
+            status_code=400,
+            detail="You cannot place or update orders for past dates.",
+        )
+
+    if order_date == today:
+        current_minutes = now.hour * 60 + now.minute
+
+        if meal_type == "lunch" and current_minutes >= 10 * 60:
+            raise HTTPException(
+                status_code=409,
+                detail="The lunch order cutoff is 10:00 AM.",
+            )
+
+        if meal_type == "dinner" and current_minutes >= 18 * 60:
+            raise HTTPException(
+                status_code=409,
+                detail="The dinner order cutoff is 6:00 PM.",
+            )
+
+def get_day_off(db: Session, target_date: date) -> MessDayOff | None:
+    return db.query(MessDayOff).filter(MessDayOff.date == target_date).first()
+
+
+def ensure_mess_open(db: Session, target_date: date) -> None:
+    day_off = get_day_off(db, target_date)
+    if day_off:
+        reason = f" Reason: {day_off.reason}" if day_off.reason else ""
+        raise HTTPException(
+            status_code=409,
+            detail=f"The mess is closed on {target_date}.{reason}",
+        )
 
 
 def update_order_payment_status(order: Order) -> None:
@@ -78,6 +120,7 @@ def get_oldest_unpaid_orders(
         db.query(Order)
         .filter(
             Order.user_id == user_id,
+            Order.order_status=='Completed',
             Order.amount_paid < Order.total_amount,
             Order.total_amount > 0,
         )
@@ -216,6 +259,8 @@ def create_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    ensure_mess_open(db, date.today())
+
     # Prevent duplicate menu item entries in one request.
     item_ids = [item.menu_item_id for item in data.items]
 
@@ -295,6 +340,11 @@ def upsert_meal_order(
 ):
     print("ORDER REQUEST:", data.model_dump())
     meal_type=meal_type.lower()
+
+    target_date=data.order_date or datetime.now(INDIA_TZ).date()
+    validate_order_date_and_cutoff(target_date,meal_type)
+    ensure_mess_open(db, target_date)
+
     if meal_type not in {"lunch","dinner" }:
         raise HTTPException(
             status_code=400,
@@ -318,20 +368,21 @@ def upsert_meal_order(
             db.query(Order)
             .filter(
                 Order.user_id==current_user.id,
-                Order.date==date.today(),
+                Order.date==target_date,
                 Order.meal_type==meal_type,
             )
             .first()
         )
-        if order and order.amount_paid > Decimal("0.00"):
+        if order and order.order_status !='Submitted':
             raise HTTPException(
                 status_code=409,
-                detail="This order has a payment applied and can't be edited",
+                detail='This order cannot be editted directly. Request an update from the admin.',
             )
+
         if order is None:
             order=Order(
                 user_id=current_user.id,
-                date=date.today(),
+                date=target_date,
                 meal_type=meal_type,
                 eating=data.eating,
                 total_amount=Decimal('0.00'),
@@ -374,13 +425,9 @@ def upsert_meal_order(
                 )
 
         order.total_amount = total
-        order.amount_paid = Decimal("0.00")
-        update_order_payment_status(order)
+
 
         db.flush()
-
-        # Automatically use any unused deposit credit.
-        apply_available_credit(db, current_user.id)
 
         db.commit()
         db.refresh(order)
@@ -393,6 +440,161 @@ def upsert_meal_order(
     except Exception:
         db.rollback()
         raise
+
+@router.patch("/{order_id}/request-update")
+def request_order_update(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    order = db.get(Order, order_id)
+
+    if order is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found",
+        )
+
+    # Customers can request updates only for their own orders.
+    if order.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only request updates for your own orders",
+        )
+
+    if order.order_status != "Seen":
+        raise HTTPException(
+            status_code=409,
+            detail="You can request an update only after the admin has seen the order",
+        )
+
+    if order.update_requested_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="An update has already been requested for this order",
+        )
+
+    order.update_requested_at = datetime.now(INDIA_TZ)
+
+    try:
+        db.commit()
+        db.refresh(order)
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "message": "Update requested successfully",
+        "order_id": order.id,
+        "order_status": order.order_status,
+        "update_requested_at": order.update_requested_at,
+    }
+
+@router.get("/days-off", response_model=list[MessDayOffResponse])
+def list_days_off(
+    from_date: date | None = None,
+    to_date: date | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = db.query(MessDayOff)
+    if from_date:
+        query = query.filter(MessDayOff.date >= from_date)
+    if to_date:
+        query = query.filter(MessDayOff.date <= to_date)
+    return query.order_by(MessDayOff.date.asc()).all()
+
+
+@router.get("/admin/calendar")
+def get_admin_calendar(
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=400, detail="Month must be between 1 and 12")
+    first = date(year, month, 1)
+    next_month = date(year + (month == 12), 1 if month == 12 else month + 1, 1)
+    rows = (
+        db.query(Order.date, func.count(Order.id))
+        .filter(Order.date >= first, Order.date < next_month)
+        .group_by(Order.date)
+        .all()
+    )
+    day_offs = db.query(MessDayOff).filter(MessDayOff.date >= first, MessDayOff.date < next_month).all()
+    return {
+        "order_counts": {row[0].isoformat(): row[1] for row in rows},
+        "days_off": [
+            {"id": item.id, "date": item.date, "reason": item.reason}
+            for item in day_offs
+        ],
+    }
+
+
+@router.post("/admin/days-off", response_model=MessDayOffResponse)
+def create_day_off(
+    target_date: date,
+    reason: str | None = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    today = datetime.now(INDIA_TZ).date()
+    if target_date < today:
+        raise HTTPException(status_code=400, detail="A day off can only be set for today or a future date.")
+
+    existing = get_day_off(db, target_date)
+    if existing:
+        return existing
+
+    completed = (
+        db.query(Order)
+        .filter(Order.date == target_date, Order.order_status == "Completed")
+        .count()
+    )
+    if completed:
+        raise HTTPException(
+            status_code=409,
+            detail="This date already has completed orders, so it cannot be closed retroactively.",
+        )
+
+    day_off = MessDayOff(date=target_date, reason=(reason or "").strip() or None)
+    db.add(day_off)
+
+    # A closure cancels every existing order on that date. Since completed orders
+    # are blocked above, no completed payment due is accidentally cancelled.
+    db.query(Order).filter(Order.date == target_date).update(
+        {"order_status": "Cancelled", "admin_seen_at": None, "update_requested_at": None},
+        synchronize_session=False,
+    )
+
+    db.commit()
+    db.refresh(day_off)
+    return day_off
+
+
+@router.delete("/admin/days-off/{target_date}")
+def remove_day_off(
+    target_date: date,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    day_off = get_day_off(db, target_date)
+    if not day_off:
+        raise HTTPException(status_code=404, detail="Day off not found")
+    db.delete(day_off)
+    # Cancelled orders on a closure are restored to Submitted if the admin
+    # reopens the date. There is currently no other cancellation path.
+    db.query(Order).filter(
+        Order.date == target_date,
+        Order.order_status == "Cancelled",
+    ).update(
+        {"order_status": "Submitted"},
+        synchronize_session=False,
+    )
+    db.commit()
+    return {"message": "Day reopened and cancelled orders restored", "date": target_date}
+
 
 @router.get("/admin", response_model=list[AdminOrderResponse])
 def get_orders_for_admin(
@@ -447,6 +649,17 @@ def get_orders_for_admin(
             "total_amount": order.total_amount,
             "amount_paid":order.amount_paid,
             "payment_status": order.payment_status,
+            "order_status":order.order_status,
+            "admin_seen_at":order.admin_seen_at,
+            "update_requested_at":order.update_requested_at,
+            "payment_request_status": (db.query(CustomerPaymentRequest.status)
+                .filter(CustomerPaymentRequest.order_id == order.id)
+                .order_by(CustomerPaymentRequest.requested_at.desc(), CustomerPaymentRequest.id.desc())
+                .limit(1).scalar()),
+            "payment_request_id": (db.query(CustomerPaymentRequest.id)
+                .filter(CustomerPaymentRequest.order_id == order.id, CustomerPaymentRequest.status == "pending")
+                .order_by(CustomerPaymentRequest.requested_at.desc(), CustomerPaymentRequest.id.desc())
+                .limit(1).scalar()),
             "items": [
                 {
                     "menu_item_id": item.menu_item_id,
@@ -462,6 +675,154 @@ def get_orders_for_admin(
         })
 
     return result
+
+@router.patch("/admin/{order_id}/reopen")
+def reopen_order_for_update(
+    order_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    order = db.get(Order, order_id)
+
+    if order is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found",
+        )
+
+    if order.order_status != "Seen":
+        raise HTTPException(
+            status_code=409,
+            detail="Only seen orders can be reopened",
+        )
+
+    if order.update_requested_at is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This order has no pending update request",
+        )
+
+    order.order_status = "Submitted"
+    order.admin_seen_at = None
+    order.update_requested_at = None
+
+    try:
+        db.commit()
+        db.refresh(order)
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "message": "Update request approved. Order reopened for customer editing.",
+        "order_id": order.id,
+        "order_status": order.order_status,
+        "update_requested_at": order.update_requested_at,
+    }
+
+@router.patch("/admin/{order_id}/seen")
+def mark_order_as_seen(
+    order_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    order = db.get(Order, order_id)
+
+    if order is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found",
+        )
+
+    if order.order_status != "Submitted":
+        raise HTTPException(
+            status_code=409,
+            detail="Only submitted orders can be marked as seen",
+        )
+
+    order.order_status = "Seen"
+    order.admin_seen_at = datetime.now(INDIA_TZ)
+
+    db.commit()
+    db.refresh(order)
+
+    return {
+        "message": "Order marked as seen",
+        "order_id": order.id,
+        "order_status": order.order_status,
+        "admin_seen_at": order.admin_seen_at,
+    }
+
+@router.patch("/admin/{order_id}/preparing")
+def mark_order_as_preparing(
+    order_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    order = db.get(Order, order_id)
+
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.order_status != "Seen":
+        raise HTTPException(
+            status_code=409,
+            detail="Only seen orders can be marked as preparing",
+        )
+
+    if order.update_requested_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Review the customer's update request before preparing this order",
+        )
+
+    order.order_status = "Preparing"
+
+    db.commit()
+    db.refresh(order)
+
+    return {
+        "message": "Order marked as preparing",
+        "order_id": order.id,
+        "order_status": order.order_status,
+    }
+
+
+@router.patch("/admin/{order_id}/completed")
+def mark_order_as_completed(
+    order_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    order = db.get(Order, order_id)
+
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.order_status != "Preparing":
+        raise HTTPException(
+            status_code=409,
+            detail="Only preparing orders can be marked as completed",
+        )
+
+    # Lock the order as completed first.
+    order.order_status = "Completed"
+    db.flush()
+
+    # Apply any available deposit credit to completed orders with a due.
+    apply_available_credit(db, order.user_id)
+
+    db.commit()
+    db.refresh(order)
+
+    return {
+        "message": "Order marked as completed",
+        "order_id": order.id,
+        "order_status": order.order_status,
+        "total_amount": order.total_amount,
+        "amount_paid": order.amount_paid,
+        "payment_status": order.payment_status,
+    }
 
 @router.post("/admin/customers/{user_id}/deposit")
 def add_customer_deposit(
@@ -608,6 +969,74 @@ def apply_customer_credit(
         raise
 
 
+@router.post("/{order_id}/payment-request")
+def request_payment_confirmation(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    order = db.get(Order, order_id)
+    if order is None or order.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.order_status != "Completed":
+        raise HTTPException(status_code=409, detail="Payment can only be requested for completed orders")
+    due = get_order_due(order)
+    if due <= 0:
+        raise HTTPException(status_code=409, detail="This order has no outstanding balance")
+    pending = db.query(CustomerPaymentRequest).filter(
+        CustomerPaymentRequest.order_id == order.id,
+        CustomerPaymentRequest.status == "pending",
+    ).first()
+    if pending:
+        raise HTTPException(status_code=409, detail="A payment confirmation request is already pending")
+
+    request = CustomerPaymentRequest(order_id=order.id, user_id=current_user.id, amount=due)
+    db.add(request)
+    db.commit()
+    db.refresh(request)
+    return {"message": "Payment confirmation requested", "request_id": request.id,
+            "status": request.status, "amount": request.amount}
+
+
+@router.patch("/admin/payment-requests/{request_id}/confirm")
+def confirm_customer_payment_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    request = db.get(CustomerPaymentRequest, request_id)
+    if request is None:
+        raise HTTPException(status_code=404, detail="Payment request not found")
+    if request.status != "pending":
+        raise HTTPException(status_code=409, detail="This payment request has already been handled")
+    order = db.get(Order, request.order_id)
+    if order is None or order.order_status != "Completed":
+        raise HTTPException(status_code=409, detail="Only completed orders can be paid")
+    amount = min(request.amount, get_order_due(order))
+    if amount <= 0:
+        request.status = "confirmed"
+        request.confirmed_at = datetime.now(INDIA_TZ)
+        db.commit()
+        return {"message": "Order was already paid", "request_id": request.id}
+
+    transaction = CustomerTransaction(
+        user_id=request.user_id,
+        transaction_type="payment",
+        amount=amount,
+        note=f"Customer payment request for order #{order.id} confirmed",
+    )
+    db.add(transaction)
+    db.flush()
+    allocate_transaction_to_orders(db, transaction, request.user_id)
+    request.status = "confirmed"
+    request.confirmed_at = datetime.now(INDIA_TZ)
+    request.transaction_id = transaction.id
+    db.commit()
+    db.refresh(request)
+    return {"message": "Customer payment confirmed", "request_id": request.id,
+            "transaction_id": transaction.id, "amount": amount}
+
+
 @router.get("/account/me")
 def get_my_account(
     db: Session = Depends(get_db),
@@ -631,19 +1060,42 @@ def get_my_account(
     )
 
     total_due = sum(
-        (get_order_due(order) for order in orders),
+        (
+            get_order_due(order)
+            for order in orders
+            if order.order_status == "Completed"
+        ),
         Decimal("0.00"),
     )
+
+    account_orders = []
+    for order in orders:
+        latest_request = (db.query(CustomerPaymentRequest)
+            .filter(CustomerPaymentRequest.order_id == order.id)
+            .order_by(CustomerPaymentRequest.requested_at.desc(), CustomerPaymentRequest.id.desc())
+            .first())
+        item_ids = [item.menu_item_id for item in order.items]
+        menu_items = db.query(MenuItem).filter(MenuItem.id.in_(item_ids)).all() if item_ids else []
+        names = {item.id: item.name for item in menu_items}
+        account_orders.append({
+            "id": order.id, "date": order.date, "meal_type": order.meal_type,
+            "eating": order.eating, "total_amount": order.total_amount,
+            "amount_paid": order.amount_paid, "payment_status": order.payment_status,
+            "order_status": order.order_status,
+            "payment_request_status": latest_request.status if latest_request else None,
+            "created_at": order.created_at,
+            "items": [{"menu_item_id": item.menu_item_id, "quantity": item.quantity,
+                       "unit_price": item.unit_price,
+                       "menu_item_name": names.get(item.menu_item_id, "Unavailable item")}
+                      for item in order.items],
+        })
 
     return {
         "user_id": current_user.id,
         "customer_name": current_user.name,
         "total_due": total_due,
-        "available_credit": get_available_credit(
-            db,
-            current_user.id,
-        ),
-        "orders": orders,
+        "available_credit": get_available_credit(db, current_user.id),
+        "orders": account_orders,
         "transactions": transactions,
     }
 
@@ -680,15 +1132,37 @@ def get_customer_account(
     )
 
     total_due = sum(
-        (get_order_due(order) for order in orders),
+        (get_order_due(order) for order in orders if order.order_status == "Completed"),
         Decimal("0.00"),
     )
+
+    account_orders = []
+    for order in orders:
+        latest_request = (db.query(CustomerPaymentRequest)
+            .filter(CustomerPaymentRequest.order_id == order.id)
+            .order_by(CustomerPaymentRequest.requested_at.desc(), CustomerPaymentRequest.id.desc())
+            .first())
+        item_ids = [item.menu_item_id for item in order.items]
+        menu_items = db.query(MenuItem).filter(MenuItem.id.in_(item_ids)).all() if item_ids else []
+        names = {item.id: item.name for item in menu_items}
+        account_orders.append({
+            "id": order.id, "date": order.date, "meal_type": order.meal_type,
+            "eating": order.eating, "total_amount": order.total_amount,
+            "amount_paid": order.amount_paid, "payment_status": order.payment_status,
+            "order_status": order.order_status,
+            "payment_request_status": latest_request.status if latest_request else None,
+            "created_at": order.created_at,
+            "items": [{"menu_item_id": item.menu_item_id, "quantity": item.quantity,
+                       "unit_price": item.unit_price,
+                       "menu_item_name": names.get(item.menu_item_id, "Unavailable item")}
+                      for item in order.items],
+        })
 
     return {
         "user_id": customer.id,
         "customer_name": customer.name,
         "total_due": total_due,
         "available_credit": get_available_credit(db, user_id),
-        "orders": orders,
+        "orders": account_orders,
         "transactions": transactions,
     }

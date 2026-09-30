@@ -1,114 +1,23 @@
-.app-layout {
-  display: flex;
-  min-height: 100vh;
-  background: #f5f7fb;
-  color: #202938;
-}
-
-.sidebar {
-  width: 230px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 24px 16px;
-  background: #172033;
-  color: white;
-}
-
-.sidebar-logo {
-  margin: 0 0 32px;
-  padding-left: 12px;
-  font-size: 1.5rem;
-}
-
-.sidebar-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sidebar-nav a {
-  padding: 12px;
-  border-radius: 8px;
-  color: #cbd5e1;
-  text-decoration: none;
-  transition: background 0.15s ease;
-}
-
-.sidebar-nav a:hover {
-  background: #27344d;
-  color: white;
-}
-
-.sidebar-nav a.active {
-  background: #344563;
-  color: white;
-  font-weight: 600;
-}
-
-.logout-button {
-  margin-top: auto;
-  padding: 11px 12px;
-  border: 1px solid #536078;
-  border-radius: 8px;
-  background: transparent;
-  color: white;
-  cursor: pointer;
-}
-
-.logout-button:hover {
-  background: #27344d;
-}
-
-.main-content {
-  flex: 1;
-  min-width: 0;
-  padding: 24px;
-}
-
-.dashboard-page {
-  max-width: 1100px;
-  margin: 0 auto;
-}
-
-.dashboard-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
-  margin-top: 24px;
-}
-
-.dashboard-card {
-  padding: 20px;
-  border: 1px solid #e0e5ed;
-  border-radius: 12px;
-  background: white;
-}
-
-@media (max-width: 700px) {
-  .app-layout {
-    flex-direction: column;
-  }
-
-  .sidebar {
-    width: auto;
-    padding: 16px;
-  }
-
-  .sidebar-logo {
-    margin-bottom: 16px;
-  }
-
-  .sidebar-nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-
-  .logout-button {
-    margin-top: 16px;
-  }
-
-  .main-content {
-    padding: 16px;
-  }
-}
+.app-layout { min-height: 100vh; background: #f5f7fb; color: #202938; }
+.main-content { min-width: 0; padding: 22px 28px 40px; }
+.customer-topbar { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+.customer-topbar header { min-width: 0; flex: 1; }
+.customer-topbar header h1 { margin: 0; }
+.menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid #d8dfeb; border-radius: 12px; background: #fff; color: #172033; font-size: 1.35rem; cursor: pointer; }
+.sidebar { position: fixed; z-index: 1002; inset: 0 auto 0 0; width: min(290px, 84vw); display: flex; flex-direction: column; padding: 22px 16px; background: #172033; color: white; box-shadow: 14px 0 38px rgb(15 23 42 / 20%); transform: translateX(-110%); visibility: hidden; transition: transform .22s ease, visibility .22s; }
+.sidebar.sidebar-open { transform: translateX(0); visibility: visible; }
+.sidebar-backdrop { position: fixed; z-index: 1001; inset: 0; border: 0; background: rgb(15 23 42 / 42%); cursor: pointer; }
+.sidebar-topline { display: flex; align-items: center; justify-content: space-between; margin-bottom: 30px; }
+.sidebar-logo { margin: 0; padding-left: 10px; font-size: 1.5rem; }
+.sidebar-close { width: 36px; height: 36px; border: 1px solid #536078; border-radius: 8px; background: transparent; color: white; font-size: 1.5rem; cursor: pointer; }
+.sidebar-nav { display: flex; flex-direction: column; gap: 8px; }
+.sidebar-nav a { padding: 12px; border-radius: 8px; color: #cbd5e1; text-decoration: none; }
+.sidebar-nav a:hover, .sidebar-nav a.active { background: #344563; color: white; }
+.logout-button { margin-top: auto; padding: 11px 12px; border: 1px solid #536078; border-radius: 8px; background: transparent; color: white; cursor: pointer; }
+.logout-button:hover { background: #27344d; }
+.dashboard-page { max-width: 1100px; margin: 0 auto; }
+.dashboard-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 24px; }
+.dashboard-card { padding: 20px; border: 1px solid #e0e5ed; border-radius: 12px; background: white; }
+.dashboard-card-link { display: block; color: inherit; text-decoration: none; transition: border-color .15s ease, transform .15s ease; }
+.dashboard-card-link:hover { border-color: #9aa9c1; transform: translateY(-2px); }
+@media (max-width: 700px) { .main-content { padding: 16px; } .customer-topbar { gap: 12px; } .customer-topbar header h1 { font-size: 1.55rem; } }

@@ -109,7 +109,13 @@ export async function getMyAccount(token) {
 }
 
 // Create or update a lunch/dinner order
-export async function saveMealOrder(token, mealType, eating, cart) {
+export async function saveMealOrder(
+  token,
+  mealType,
+  eating,
+  cart,
+  orderDate
+) {
   const items = Object.entries(cart)
     .filter(([, quantity]) => quantity > 0)
     .map(([menuItemId, quantity]) => ({
@@ -126,6 +132,7 @@ export async function saveMealOrder(token, mealType, eating, cart) {
     body: JSON.stringify({
       eating,
       items: eating ? items : [],
+      order_date: orderDate,
     }),
   });
 
@@ -339,5 +346,160 @@ export async function applyCustomerCredit(token, userId) {
     throw new Error(data.detail || "Could not apply credit");
   }
 
+  return data;
+}
+
+async function patchOrderAction(token, path) {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.detail || "Could not update order");
+  }
+
+  return data;
+}
+
+export function markOrderSeen(token, orderId) {
+  return patchOrderAction(
+    token,
+    `/orders/admin/${orderId}/seen`
+  );
+}
+
+export function markOrderPreparing(token, orderId) {
+  return patchOrderAction(
+    token,
+    `/orders/admin/${orderId}/preparing`
+  );
+}
+
+export function markOrderCompleted(token, orderId) {
+  return patchOrderAction(
+    token,
+    `/orders/admin/${orderId}/completed`
+  );
+}
+
+export function reopenOrderForUpdate(token, orderId) {
+  return patchOrderAction(
+    token,
+    `/orders/admin/${orderId}/reopen`
+  );
+}
+
+export function requestOrderUpdate(token, orderId) {
+  return patchOrderAction(
+    token,
+    `/orders/${orderId}/request-update`
+  );
+}
+// Customer asks the admin to confirm that an outstanding completed order was paid.
+export async function requestPaymentConfirmation(token, orderId) {
+  const response = await fetch(`${API_URL}/orders/${orderId}/payment-request`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Could not request payment confirmation");
+  return data;
+}
+
+// Admin confirms a customer's reported payment.
+export async function confirmCustomerPaymentRequest(token, requestId) {
+  const response = await fetch(`${API_URL}/orders/admin/payment-requests/${requestId}/confirm`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Could not confirm payment request");
+  return data;
+}
+
+
+export async function getAdminCalendar(token, year, month) {
+  const response = await fetch(`${API_URL}/orders/admin/calendar?year=${year}&month=${month}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Could not fetch calendar");
+  return data;
+}
+
+export async function getDayOff(token, date) {
+  const data = await getDaysOff(token, date, date);
+  return data[0] || null;
+}
+
+export async function getDaysOff(token, fromDate = "", toDate = "") {
+  const response = await fetch(`${API_URL}/orders/days-off?${new URLSearchParams({ ...(fromDate ? { from_date: fromDate } : {}), ...(toDate ? { to_date: toDate } : {}) }).toString()}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Could not fetch mess closures");
+  return data;
+}
+
+export async function createDayOff(token, date, reason = "") {
+  const params = new URLSearchParams({ target_date: date });
+  if (reason.trim()) params.set("reason", reason.trim());
+  const response = await fetch(`${API_URL}/orders/admin/days-off?${params.toString()}`, {
+    method: "POST", headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Could not close the mess");
+  return data;
+}
+
+export async function removeDayOff(token, date) {
+  const response = await fetch(`${API_URL}/orders/admin/days-off/${date}`, {
+    method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Could not reopen the mess");
+  return data;
+}
+
+export async function getAdminMenu(token) {
+  const response = await fetch(`${API_URL}/menu/admin`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Could not fetch menu");
+  return data;
+}
+
+export async function createMenuItem(token, item) {
+  const response = await fetch(`${API_URL}/menu`, {
+    method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(item),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Could not create menu item");
+  return data;
+}
+
+export async function updateMenuItem(token, itemId, item) {
+  const response = await fetch(`${API_URL}/menu/${itemId}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(item),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Could not update menu item");
+  return data;
+}
+
+export async function archiveMenuItem(token, itemId) {
+  const response = await fetch(`${API_URL}/menu/${itemId}`, {
+    method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Could not remove menu item");
   return data;
 }

@@ -89,6 +89,17 @@ class MenuItem(Base):
     )
 
 
+class MessDayOff(Base):
+    __tablename__ = "mess_days_off"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    date: Mapped[date] = mapped_column(Date, unique=True, index=True)
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class Order(Base):
     __tablename__ = "orders"
 
@@ -154,6 +165,27 @@ class Order(Base):
             back_populates="order",
             cascade="all, delete-orphan",
         )
+    )
+
+    #workflow status: sbmitted,preparing, completed, etc
+    order_status:Mapped[str]=mapped_column(
+        String(20),
+        default='Submitted',
+        server_default='Submitted',
+        nullable=False,
+
+    )
+    
+    #When the admin marks the order as seen
+    admin_seen_at:Mapped[datetime|None]=mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    #when customer requests an update when admin has seen it
+    update_requested_at:Mapped[datetime|None]=mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
 
@@ -263,4 +295,29 @@ class OrderPaymentAllocation(Base):
 
     order: Mapped["Order"] = relationship(
         back_populates="payment_allocations",
+    )
+
+class CustomerPaymentRequest(Base):
+    """Customer-reported payment awaiting admin verification."""
+    __tablename__ = "customer_payment_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("orders.id"), index=True, nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), index=True, nullable=False
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending", server_default="pending", nullable=False
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("customer_transactions.id"), nullable=True
     )

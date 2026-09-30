@@ -1,0 +1,63 @@
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: #f5f7fb;
+  color: #202938;
+}
+
+.login-shell {
+  width: min(930px, 100%);
+  min-height: 570px;
+  display: grid;
+  grid-template-columns: .9fr 1.1fr;
+  overflow: hidden;
+  border: 1px solid #e0e5ed;
+  border-radius: 20px;
+  background: white;
+  box-shadow: 0 22px 60px rgba(24, 38, 61, .10);
+}
+
+.login-brand-panel {
+  padding: 48px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: #172033;
+  color: white;
+}
+
+.login-brand {
+  font-family: Georgia, serif;
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.login-brand-copy { max-width: 300px; }
+.login-brand-copy h2 { margin: 0 0 13px; font-family: Georgia, serif; font-size: 2.25rem; line-height: 1.05; }
+.login-brand-copy p { margin: 0; color: #bdc8da; line-height: 1.65; }
+.login-brand-footer { color: #8795ac; font-size: .78rem; }
+
+.login-form-panel { padding: 48px 54px; display: flex; flex-direction: column; justify-content: center; }
+.login-form-panel h1 { margin: 0 0 8px; font-family: Georgia, serif; font-size: 2rem; }
+.login-form-panel > p { margin: 0 0 28px; color: #71809a; }
+.login-form { display: flex; flex-direction: column; gap: 16px; }
+.login-form label { display: flex; flex-direction: column; gap: 7px; color: #46546a; font-size: .82rem; font-weight: 600; }
+.login-form input { width: 100%; box-sizing: border-box; padding: 12px 13px; border: 1px solid #cbd3df; border-radius: 9px; background: #fff; color: #202938; font: inherit; transition: border-color .15s ease, box-shadow .15s ease; }
+.login-form input:focus { outline: none; border-color: #7186a7; box-shadow: 0 0 0 3px #e7edf6; }
+.login-form button { margin-top: 5px; padding: 12px 14px; border: 0; border-radius: 9px; background: #344563; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+.login-form button:hover { background: #273752; }
+.login-form button:disabled { opacity: .6; cursor: not-allowed; }
+.login-error { margin: 15px 0 0; padding: 10px 12px; border-radius: 8px; background: #fde9e9; color: #9b3535; font-size: .84rem; }
+
+@media (max-width: 700px) {
+  .login-page { padding: 14px; align-items: stretch; }
+  .login-shell { min-height: auto; grid-template-columns: 1fr; border-radius: 15px; }
+  .login-brand-panel { min-height: 210px; padding: 28px; }
+  .login-brand-copy h2 { font-size: 1.75rem; }
+  .login-brand-footer { display: none; }
+  .login-form-panel { padding: 32px 26px; }
+}

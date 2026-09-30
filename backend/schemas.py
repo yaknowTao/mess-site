@@ -102,11 +102,17 @@ class MyOrderResponse(BaseModel):
     amount_paid:Decimal
     payment_status:str
     created_at:datetime
+
+    order_status:str
+    admin_seen_at:datetime|None
+    update_requested_at:datetime|None
+
     items:list[OrderItemResponse]
 
     model_config=ConfigDict(from_attributes=True)
 
 class OrderUpsert(BaseModel):
+    order_date:date|None=None
     eating:bool=True
     items:list[OrderItemCreate]=Field(default_factory=list)
 
@@ -127,6 +133,13 @@ class AdminOrderResponse(BaseModel):
     total_amount: Decimal
     amount_paid:Decimal
     payment_status: str
+
+    order_status:str
+    admin_seen_at:datetime|None
+    update_requested_at:datetime|None
+    payment_request_status: str | None = None
+    payment_request_id: int | None = None
+
     items: list[AdminOrderItemResponse]
 
 # -------------------------
@@ -150,6 +163,13 @@ class CustomerTransactionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CustomerAccountOrderItemResponse(BaseModel):
+    menu_item_id: int
+    quantity: int
+    unit_price: Decimal
+    menu_item_name: str
+
+
 class CustomerAccountOrderResponse(BaseModel):
     id: int
     date: date
@@ -158,6 +178,9 @@ class CustomerAccountOrderResponse(BaseModel):
     total_amount: Decimal
     amount_paid: Decimal
     payment_status: str
+    order_status: str
+    payment_request_status: str | None = None
+    items: list[CustomerAccountOrderItemResponse] = Field(default_factory=list)
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -177,3 +200,11 @@ class ApplyCreditResponse(BaseModel):
     user_id: int
     amount_applied: Decimal
     remaining_credit: Decimal
+
+class MessDayOffResponse(BaseModel):
+    id: int
+    date: date
+    reason: str | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
