@@ -26,6 +26,16 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+@app.get("/db-check")
+def db_check(db: Session = Depends(get_db)):
+    from models import User, MenuItem
+
+    return {
+        "users": db.query(User).count(),
+        "menu_items": db.query(MenuItem).count(),
+    }
+
 app.include_router(auth_router)
 app.include_router(orders_router)
 
