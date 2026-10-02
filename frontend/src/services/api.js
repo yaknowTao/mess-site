@@ -1,4 +1,4 @@
-const API_URL = "http://localhost:8000";
+const API_URL = "https://mess-site-odx3.onrender.com";
 
 // Fetch menu items
 export async function getMenu() {
