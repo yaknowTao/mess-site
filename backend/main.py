@@ -57,6 +57,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "https://mess-site-qomyue01h-void-40d1.vercel.app",
+        "https://mess-site-ruddy.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
