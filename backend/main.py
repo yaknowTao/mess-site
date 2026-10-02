@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 import models
@@ -29,13 +29,24 @@ def health():
 
 @app.get("/db-check")
 def db_check(db: Session = Depends(get_db)):
-    from models import User, MenuItem
+    db_info = db.execute(
+        text("""
+            SELECT
+                current_database() AS database,
+                current_user AS user_name,
+                current_schema() AS schema_name,
+                inet_server_addr()::text AS server_ip
+        """)
+    ).mappings().one()
 
     return {
+        "database": db_info["database"],
+        "user": db_info["user_name"],
+        "schema": db_info["schema_name"],
+        "server_ip": db_info["server_ip"],
         "users": db.query(User).count(),
         "menu_items": db.query(MenuItem).count(),
     }
-
 app.include_router(auth_router)
 app.include_router(orders_router)
 
